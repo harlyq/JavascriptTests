@@ -3,10 +3,11 @@
   <head>
     <script src="lodash.js" type="text/javascript"></script>
     <script type="text/javascript">
-      (function() {
+      (function TestLayout(window) {
         var canvas;
         var ctx;
-        var layouts = [];
+        var dragDropLayout = null;
+        var board = null;
 
         //---------------------------------
         function tween(obj, props, durationMS) {
@@ -53,7 +54,7 @@
         }
 
         function isInside(obj, x, y) {
-          return x > obj.x && x < obj.x + obj.width && y > obj.y && y < obj.y + obj.height;
+          return x >= obj.x && x < obj.x + obj.width && y >= obj.y && y < obj.y + obj.height;
         };
 
         Array.prototype.remove = function(val) {
@@ -64,6 +65,36 @@
             }
           };
         }
+
+        //---------------------------------
+        function Board() {
+          this.layouts = [];
+        }
+
+        Board.prototype.addLayout = function(layout) {
+          this.layouts.push(layout);
+        };
+
+        Board.prototype.removeLayout = function(layout) {
+          this.layouts.remove(layout);
+        };
+
+        Board.prototype.getLayoutXY = function(x, y) {
+          // loop backwards as the last layouts appear on top
+          for (var i = this.layouts.length - 1; i >= 0; i--) {
+            var layout = this.layouts[i];
+            if (isInside(layout, x, y)) {
+              return layout;
+            }
+          }
+          return null;
+        };
+
+        Board.prototype.draw = function() {
+          for (var i = 0; i < this.layouts.length; i++) {
+            this.layouts[i].draw(ctx);
+          }
+        };
 
         //---------------------------------
         function Card(x, y, width, height) {
@@ -79,11 +110,11 @@
         Card.unique = 0;
 
         Card.prototype.setTopLeft = function(x, y) {
-          assert(y && x);
+          assert(typeof y === "number" && typeof x === "number");
 
-          tween(this, {x:x, y:y}, 100);
-          // this.x = x;
-          // this.y = y;
+          //tween(this, {x:x, y:y}, 100);
+          this.x = x;
+          this.y = y;
         };
 
         Card.prototype.createImage = function() {
@@ -112,7 +143,8 @@
         };
 
         //---------------------------------
-        function Layout(x, y, width, height) {
+        function Layout(name, x, y, width, height) {
+          this.name = name || "";
           this.x = x || 0;
           this.y = y || 0;
           this.width = width || 100;
@@ -123,10 +155,13 @@
           this.selectedCards = [];
           this.selectToFront = false;
           this.selectOffset = 20;
+          this.dragDropOffset = {};
+          this.dragDropStart = false;
+          this.hidden = false;
         }
 
         Layout.Location = Enum("Top", "Bottom", "Random");
-        Layout.Style = Enum("Stack", "Random", "Row", "Column");
+        Layout.Style = Enum("Stack", "Random", "Row", "Column", "DragDrop");
         Layout.Interaction = Enum("Select", "MultiSelect", "DragDrop");
         Layout.Options = Enum("IgnoreBringToFront");
 
@@ -140,13 +175,37 @@
           return Object.freeze(self); // return the 'self' object, instead of this function
         }
 
+        Layout.prototype.setTopLeft = function(x, y) {
+          assert(typeof y === "number" && typeof x === "number");
+
+          this.x = x;
+          this.y = y;
+          this.arrange();  // move all of the cards
+        };
+
+        Layout.prototype.setHidden = function(hidden) {
+          this.hidden = hidden;
+        };
+
         Layout.prototype.setStyle = function(style) {
           this.style = style;
-          this.layout();
+          this.arrange();
+        };
+
+        Layout.prototype.setInteraction = function(interaction) {
+          this.interaction = interaction;
+          this.arrange();
         };
 
         Layout.prototype.addCard = function(card, loc) {
           loc = loc || Layout.Location.Top;
+
+          if (card.layout) {
+            var oldLayout = card.layout;
+            card.layout.cards.remove(card); // unbind from the old layout
+            card.layout = null;
+            oldLayout.arrange();
+          }
 
           switch (loc) {
             case Layout.Location.Top:
@@ -158,10 +217,25 @@
             case Layout.Location.Random:
               this.cards.splice(Math.random()*this.cards.length, 0, card);
               break;
+            default:
+              return false; // card not added
           }
+
+          card.layout = this;
+          this.arrange();
         };
 
-        Layout.prototype.removeCard = function(loc) {
+        Layout.prototype.addCards = function(layout, start, count, loc) {
+          start = start || 0;
+          count = count || layout.cards.length - start;
+
+          // loop backwards as addCard will remove them from the layout that we are iterating on
+          for (var i = start + count - 1; i >= start; i--) {
+            this.addCard(layout.cards[i], loc);  // move each card
+          }
+        }
+
+        Layout.prototype.getCard = function(loc) {
           if (this.cards.length === 0)
             return null;
 
@@ -177,11 +251,13 @@
             case Layout.Location.Random:
               index = Math.random()*this.cards.length;
               break;
+            default:
+              return null;  // layout not known
           }
-          return this.cards.splice(index, 1)[0];
+          return this.cards[index];
         };
 
-        Layout.prototype.layout = function() {
+        Layout.prototype.arrange = function() {
           var cards = this.cards;
           var numCards = cards.length;
           if (numCards <= 0)
@@ -238,16 +314,24 @@
                   cy + delta*(2*i - (numCards - 1)) - card.height*0.5);
               }
               break;
+
+            case Layout.Style.DragDrop:
+              for (var i = numCards - 1; i >= 0; i--) {
+                cards[i].setTopLeft(this.x, this.y);
+              }
           }
         };
 
         Layout.prototype.draw = function(ctx) {
+          if (this.hidden)
+            return;
+
           ctx.fillStyle = "#a0a0ff";
           ctx.fillRect(this.x, this.y, this.width, this.height);
           ctx.fillStyle = "white";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText("Layout", this.x + this.width*0.5, this.y + this.height*0.5);
+          ctx.fillText(this.name, this.x + this.width*0.5, this.y + this.height*0.5);
 
           for (var i = 0; i < this.cards.length; i++) {
             var card = this.cards[i];
@@ -272,10 +356,10 @@
             this.cards[otherIndex] = card;
           }
 
-          this.layout();
+          this.arrange();
         };
 
-        Layout.prototype.getCardFromXY = function(x, y, opts) {
+        Layout.prototype.getCardXY = function(x, y, opts) {
           if (this.selectToFront && (!opts & Layout.Options.IgnoreBringToFront) ) {
             for (var i = this.selectedCards.length - 1; i >= 0; i--) {
               var card = this.selectedCards[i];
@@ -302,19 +386,19 @@
 
           var changedCards = _.union(cards, this.selectedCards);
           this.selectedCards = cards;
-          this.layout();
+          this.arrange();
         };
 
         Layout.prototype.addSelected = function(card) {
           assert(card);
           this.selectedCards.push(card);
-          this.layout();
+          this.arrange();
         };
 
         Layout.prototype.removeSelected = function(card) {
           assert(card);
           this.selectedCards.remove(card);
-          this.layout();
+          this.arrange();
         };
 
         Layout.prototype.isSelected = function(card) {
@@ -322,7 +406,7 @@
         };
 
         Layout.prototype.pointerStart = function(x, y) {
-          var card = this.getCardFromXY(x, y);
+          var card = this.getCardXY(x, y);
 
           switch (this.interaction) {
             case Layout.Interaction.Select:
@@ -338,29 +422,58 @@
                 }
               }
               break;
+
+            case Layout.Interaction.DragDrop:
+              if (card) {
+                this.dragDropStarted = true;
+                this.dragDropOffset = {x: x - card.x, y: y - card.y};
+                dragDropLayout.setHidden(false);
+                dragDropLayout.setTopLeft(card.x, card.y);
+                dragDropLayout.addCard(card);
+              }
+              break;
           }
         };
 
         Layout.prototype.pointerMove = function(x, y) {
           switch (this.interaction) {
             case Layout.Interaction.Select:
-              var card = this.getCardFromXY(x, y, Layout.Options.IgnoreBringToFront);
+              var card = this.getCardXY(x, y, Layout.Options.IgnoreBringToFront);
               this.setSelected([card]);
               break;
 
             case Layout.Interaction.MultiSelect:
               break;
+
+            case Layout.Interaction.DragDrop:
+              if (this.dragDropStarted) {
+                dragDropLayout.setTopLeft(x - this.dragDropOffset.x, y - this.dragDropOffset.y);
+              }
+              break;
           }
         };
 
         Layout.prototype.pointerEnd = function(x, y) {
+          switch (this.interaction) {
+            case Layout.Interaction.DragDrop:
+              var layout = board.getLayoutXY(x, y);
+              if (layout) {
+                layout.addCards(dragDropLayout);
+              } else {
+                this.addCards(dragDropLayout); // cancel drag
+              }
+              dragDropLayout.setHidden(true);
+              this.dragDropStarted = false;
+              break;
+          }
         };
 
         //---------------------------------
         function draw() {
-          for (var i = 0; i < layouts.length; i++) {
-            layouts[i].draw(ctx);
-          }
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          board.draw(ctx);
+
+          dragDropLayout.draw(ctx);
         }
 
         function frame() {
@@ -373,13 +486,7 @@
           var x = e.touches[0].pageX - canvas.offsetLeft;
           var y = e.touches[0].pageY - canvas.offsetTop;
 
-          for (var i = layouts.length - 1; i >= 0; i--) {
-            var layout = layouts[i];
-            if (isInside(layout, x, y)) {
-              sourceLayout = layout;
-              break;
-            }
-          }
+          sourceLayout = getLayoutXY(x, y);
 
           if (sourceLayout) {
             sourceLayout.pointerStart(x, y);
@@ -411,13 +518,7 @@
           var x = e.pageX - canvas.offsetLeft;
           var y = e.pageY - canvas.offsetTop;
 
-          for (var i = layouts.length - 1; i >= 0; i--) {
-            var layout = layouts[i];
-            if (isInside(layout, x, y)) {
-              sourceLayout = layout;
-              break;
-            }
-          }
+          sourceLayout = board.getLayoutXY(x, y);
 
           if (sourceLayout) {
             sourceLayout.pointerStart(x, y);
@@ -457,17 +558,24 @@
           canvas.addEventListener("mousedown", mouseDown);
           canvas.addEventListener("touchstart", touchStart);
 
+          board = new Board();
           var card = new Card();
-          var layout = new Layout(60, 10, 200, 200);
-          layouts.push(layout);
+          var layout = new Layout("TestA", 60, 10, 200, 200);
+          var layout2 = new Layout("TestB", 20, 240, 100, 300);
 
-          layout.addCard(card, Layout.Location.Random);
-          assert(layout.cards.length == 1);
-          var newCard = layout.removeCard(Layout.Location.Random);
-          assert(layout.cards.length == 0);
-          assert(card === newCard);
+          board.addLayout(layout);
+          board.addLayout(layout2);
+
+          // special layout for drag drop
+          dragDropLayout = new Layout("", 0, 0, 10, 10);
+          dragDropLayout.setStyle(Layout.Style.DragDrop);
+          dragDropLayout.setHidden(true);
 
           layout.setStyle(Layout.Style.Row);
+          layout.setInteraction(Layout.Interaction.DragDrop);
+
+          layout2.setStyle(Layout.Style.Column);
+          layout2.setInteraction(Layout.Interaction.DragDrop);
 
           for (var i = 0; i < 10; ++i) {
             var card = new Card(0, 0, 75, 105);
@@ -478,20 +586,68 @@
 
           requestAnimationFrame(frame);
         };
-      })();
+
+        window.Card = Card;
+        window.Layout = Layout;
+        window.Board = Board;
+      })(window);
+    </script>
+    <script>
     </script>
   </head>
   <body>
     <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
-    <h1>Rue Barr&#xe9;</h1>
     <canvas id="canvas" width="600px" height="600px"></canvas>
+    <div id="qunit"></div>
+    <div id="qunit-fixture"></div>
+    <script src="qunit-1.14.0.js" type="text/javascript"></script>
+    <link href="qunit-1.14.0.css" type="text/css" rel="stylesheet"></link>
+    <script>
+      QUnit.test("my first test", function(assert) {
+        var layoutA = new Layout();
+        var cardA = new Card();
+        var cardB = new Card();
+        layoutA.addCard(cardA);
+        assert.equal(1, layoutA.cards.length, "1st card added");
+        assert.equal(cardA, layoutA.getCard(), "our 1st card is present");
+        layoutA.addCard(cardB);
+        assert.equal(2, layoutA.cards.length, "2nd card added");
+        assert.equal(cardB, layoutA.getCard(Layout.Location.Top), "our 2nd card is present");
+        assert.equal(cardA, layoutA.getCard(Layout.Location.Bottom), "our 1st card is still there");
+      });
+
+      QUnit.test("get tests", function(assert) {
+        var boardA = new Board();
+        var layoutA = new Layout("A", 10, 20, 40, 50);
+        var cardA = new Card();
+        boardA.addLayout(layoutA);
+        layoutA.addCard(cardA);
+
+        assert.equal(null, boardA.getLayoutXY(19,19), "pick outside layout");
+        assert.equal(null, boardA.getLayoutXY(51,41), "pick outside layout [2]");
+        assert.equal(layoutA, boardA.getLayoutXY(10,20), "pick inside layout border");
+        assert.equal(layoutA, boardA.getLayoutXY(49,69), "pick inside layout border [2]");
+        assert.equal(layoutA, boardA.getLayoutXY(20,30), "pick inside layout general");
+        assert.equal(cardA, layoutA.getCardXY(30, 45), "pick card in center of layout");
+      });
+
+      QUnit.test("copy layouts", function(assert) {
+        var layoutA = new Layout("A");
+        var layoutB = new Layout("B");
+        var NUM_CARDS = 3;
+        for (var i = 0; i < NUM_CARDS; ++i) {
+          layoutA.addCard(new Card());
+        }
+        assert.equal(NUM_CARDS, layoutA.cards.length, "" + NUM_CARDS + " cards added to A");
+
+        layoutB.addCards(layoutA, 1, 1);
+        assert.equal(NUM_CARDS - 1, layoutA.cards.length, "one less card in A");
+        assert.equal(1, layoutB.cards.length, "card added to B");
+
+        layoutB.addCards(layoutA);
+        assert.equal(0, layoutA.cards.length, "no cards in A");
+        assert.equal(NUM_CARDS, layoutB.cards.length, "all cards in B");
+      });
+    </script>    
   </body>
 </html>
