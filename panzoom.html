@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="panzoom.js" type="text/javascript"></script>
+    <style type="text/css">
+      #background {
+        background: url("World-1985.png") no-repeat;
+        width: 200px;
+        height: 200px;
+        cursor: pointer;
+      }
+
+      #zoomImage {
+        position: relative;
+        overflow: hidden;
+        width: 200px;
+        height: 200px;
+        cursor: pointer;
+      }
+
+      #zoomImage img {
+        position: absolute;
+      }
+    </style>
+    <script type="text/javascript">
+      var target = null;
+      var backgroundWidth = 0;
+      var backgroundHeight = 0;
+      var logElem = null;
+
+      function log(msg) {
+        logElem.innerHTML = msg + "<br \>" + logElem.innerHTML.substr(0, 300);
+      }
+
+      function mouseDown(e) {
+        e.preventDefault();
+        document.addEventListener("mouseup", mouseUp);
+        document.addEventListener("mousemove", mouseMove);
+
+        target = this;
+        var x = e.pageX - target.offsetLeft;
+        var y = e.pageY - target.offsetTop;
+
+        target.panZoom.setPivot(x, y);
+    }
+
+      function mouseMove(e) {
+        e.preventDefault();
+
+        updateMouse(e);
+      }
+
+      function mouseUp(e) {
+        e.preventDefault();
+        document.removeEventListener("mouseup", mouseUp);
+        document.removeEventListener("mousemove", mouseMove);
+
+        updateMouse(e);
+        target.panZoom.clearPivot();
+      }
+
+      function mouseWheel(e) {
+        e.preventDefault();
+
+        var x = e.offsetX;
+        var y = e.offsetY;
+
+        if (e.wheelDelta > 0) {
+          e.target.panZoom.scaleZoom(2, 2, x, y);
+        } else {
+          e.target.panZoom.scaleZoom(0.5, 0.5, x, y);
+        }
+
+        updateBackground(e.target);
+      }
+
+      function updateMouse(e) {
+        var x = e.pageX - target.offsetLeft;
+        var y = e.pageY - target.offsetTop;
+
+        var panZoom = target.panZoom;
+        panZoom.movePivot(x, y);
+        updateBackground(target);
+      }
+
+      function touchStart(e) {
+        e.preventDefault();
+        document.addEventListener("touchend", touchEnd);
+        document.addEventListener("touchmove", touchMove);
+
+        target = this;
+        for (var i = 0; i < e.changedTouches.length; ++i) {
+          var x = e.changedTouches[i].pageX - target.offsetLeft;
+          var y = e.changedTouches[i].pageY - target.offsetTop;
+
+          target.panZoom.setPivot(x, y, e.changedTouches[i].identifier);
+        }
+      }
+
+      function touchMove(e) {
+        e.preventDefault();
+
+        var panZoom = target.panZoom;
+        for (var i = 0; i < e.changedTouches.length; ++i) {
+          var x = e.changedTouches[i].pageX - target.offsetLeft;
+          var y = e.changedTouches[i].pageY - target.offsetTop;
+
+          target.panZoom.movePivot(x, y, e.changedTouches[i].identifier);
+        }
+
+        updateBackground(target);
+      }
+
+      function touchEnd(e) {
+        e.preventDefault();
+
+        for (var i = 0; i < e.changedTouches.length; ++i) {
+          target.panZoom.clearPivot(e.changedTouches[i].identifier);
+        }
+
+        if (target.panZoom.numPivots() === 0) {
+          document.removeEventListener("touchend", touchEnd);
+          document.removeEventListener("touchmove", touchMove);
+        }
+      }
+
+      function updateBackground(target) {
+        var panZoom = target.panZoom;
+        if (target.children.length === 0) {
+          target.style.backgroundPosition = panZoom.pan.x*panZoom.zoom.x + "px " + panZoom.pan.y*panZoom.zoom.y + "px";
+          target.style.backgroundSize = panZoom.zoom.x*backgroundWidth + "px " + panZoom.zoom.y*backgroundHeight + "px";
+        } else {
+          // var transformStr = 
+          //     "scale(" + panZoom.zoom.x + "," + panZoom.zoom.y + ") " +
+          //     "translate(" + panZoom.pan.x + "px," + panZoom.pan.y + ")";
+          // for (var i = target.children.length - 1; i >= 0; i--) {
+          //   target.style.webkitTransform = transformStr;
+          // };
+        }
+      }
+
+      (function(window) {
+
+        window.onload = function() {
+          backgroundElem = document.getElementById("background");
+          backgroundElem.panZoom = new PanZoom();
+          backgroundElem.addEventListener("mousedown", mouseDown);
+          backgroundElem.addEventListener("touchstart", touchStart);
+          backgroundElem.addEventListener("mousewheel", mouseWheel);
+
+          // imageElem = document.getElementById("zoomImage");
+          // imageElem.panZoom = new PanZoom();
+          // imageElem.addEventListener("mousedown", mouseDown);
+          // imageElem.addEventListener("touchstart", touchStart);
+          // imageElem.addEventListener("mousewheel", mouseWheel);
+
+          logElem = document.getElementById("log");
+
+          var image = new Image();
+          image.src = "World-1985.png";
+          image.onload = function() {
+            backgroundWidth = this.width;
+            backgroundHeight = this.height;
+          }
+
+        };
+      })(window);
+    </script>
+  </head>
+  <body>
+    <div id="background"></div>
+    <!--div id="zoomImage"><image id="image" src="World-1985.png"></image></div-->
+    <div id="log"></div>
+    <div id="qunit"></div>
+    <div id="qunit-fixture"></div>
+    <script src="qunit-1.14.0.js" type="text/javascript"></script>
+    <link href="qunit-1.14.0.css" type="text/css" rel="stylesheet"></link>
+    <script>
+      QUnit.test("PanZoom", function(assert) {
+        var panZoom = new PanZoom();
+        panZoom.maxZoom.x = 10;
+        panZoom.maxZoom.y = 10;
+        panZoom.setPivot(5,5,0);
+        assert.equal(panZoom.numPivots, 1, "one pivot when setting a single pivot");
+        panZoom.setPivot(10,10,0);
+        assert.equal(panZoom.numPivots, 1, "still one pivot when re-setting a single pivot");
+        assert.deepEqual(panZoom.pan, {x: 0, y: 0}, "no pan when setting a single pivot");
+        assert.deepEqual(panZoom.zoom, {x: 1, y: 1}, "no zoom when setting a single pivot");
+        panZoom.movePivot(20,20,0);
+        assert.equal(panZoom.numPivots, 1, "one pivot when moving a pivot");
+        assert.deepEqual(panZoom.pan, {x: 10, y: 10}, "pan when moving a pivot");
+        assert.deepEqual(panZoom.zoom, {x: 1, y: 1}, "no zoom when moving a single pivot");
+        panZoom.movePivot(10,10,0);
+        assert.equal(panZoom.numPivots, 1, "one pivot when moving a pivot back to it's start");
+        assert.deepEqual(panZoom.pan, {x: 0, y: 0}, "no pan when moving a pivot back to it's start");
+        assert.deepEqual(panZoom.zoom, {x: 1, y: 1}, "no zoom when moving a single back to it's start");
+        panZoom.clearPivot();
+        assert.equal(panZoom.numPivots, 0, "no pivots when clearing the only pivot");
+        assert.deepEqual(panZoom.pan, {x: 0, y: 0}, "no pan when clearing a pivot");
+        assert.deepEqual(panZoom.zoom, {x: 1, y: 1}, "no zoom when clearing a pivot");
+        panZoom.scaleZoom(2, 2, 20, 20);
+        assert.deepEqual(panZoom.pan, {x: -10, y: -10}, "pan when zooming in - equal");
+        assert.deepEqual(panZoom.zoom, {x: 2, y: 2}, "zoom when zooming in - equal");
+        panZoom.scaleZoom(5, 5, 20, 20);
+        assert.deepEqual(panZoom.pan, {x: -18, y: -18}, "pan when zooming in again - equal");
+        assert.deepEqual(panZoom.zoom, {x: 10, y: 10}, "zoom when zooming in again - equal");
+        panZoom.scaleZoom(0, 0, 20, 20);
+        assert.deepEqual(panZoom.pan, {x: 0, y: 0}, "pan reverted when zooming out to 0 (clamped to 1)");
+        assert.deepEqual(panZoom.zoom, {x: 1, y: 1}, "zoom clamps to minZoom when zooming out to 0");
+        panZoom.setPivot(10,10,0);
+        panZoom.setPivot(20,20,1);
+        assert.equal(panZoom.numPivots, 2, "two pivots when calling setPivot twice with different ids");
+        panZoom.movePivot(0,0,0);
+        assert.deepEqual(panZoom.pan, {x: -10, y: -10}, "pan changed when moving two pivot points")
+        assert.deepEqual(panZoom.zoom, {x: 2, y: 2}, "zoom changed when moving two pivot points")
+      });
+    </script>
+  </body>
+</html>
