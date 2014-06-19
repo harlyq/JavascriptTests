@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="text/javascript">
+      (function(window) {
+
+        function lerp(a, b, r) {
+          return a + (b - a)*r;
+        }
+
+        function clamp(val, min, max) {
+          if (val < min) return min;
+          else if (val < max) return max;
+          else return val;
+        }
+
+        function assert(cond) {
+          if (!cond)
+            debugger;
+        }
+
+        function pickRandomProperty(obj) {
+          var result;
+          var count = 0;
+          for (var prop in obj) {
+            if (obj.hasOwnProperty(prop)) {
+              if (Math.random() < 1 / ++count)
+                result = prop;
+            }
+          }
+          return result;
+        }
+
+        //-----------------------------------
+        var Chromosome = function(weights, memories, outputIndex) {
+          this.weights = weights;
+          this.memories = memories;
+          this.outputIndex = outputIndex;
+
+          this.mutate();
+          this.calcScore(); // score after mutation
+        };
+
+        Chromosome.prototype.mutate = function() {
+          if (Math.random() > this.mutationRate)
+            return false;
+
+          var randomIndex = Math.floor(Math.random()*this.weights);
+          this.weights[randomIndex] = Math.random()*2 - 1;
+        };
+
+        Chromosome.prototype.calcScore = function() {
+          if (this.score)
+            return this.score;
+
+          var score = 0;
+          for (var i = 0; i < memories.length; ++i) {
+            var result = this.calculateOutput(memories[i].inputs);
+            var output = memories[i].outputs[this.outputIndex];
+            score += (result - output)*(result - output);
+          }
+
+          this.score = score*1000;
+
+          return this.score;
+        };
+
+        Chromosome.prototype.calculateOutput = function(inputs) {
+          var result = 0;
+          for (var i = this.weights.length - 1; i >= 0; i--) {
+            result += this.weights[i]*inputs[i];
+          }
+          return result;
+        }
+
+        Chromosome.prototype.mateWith = function(other) {
+          var numWeights = this.weights.length;
+          assert(other.weights.length === numWeights);
+
+          var splitIndex = Math.floor(Math.random()*numWeights);
+
+          var newWeightsA = new Array(numWeights);
+          var newWeightsB = new Array(numWeights);
+
+          for (var i = 0; i < numWeights; ++i) {
+            if (i < splitIndex) {
+              newWeightsA[i] = this.weights[i];
+              newWeightsB[i] = other.weights[i];
+            } else {
+              newWeightsA[i] = other.weights[i];
+              newWeightsB[i] = this.weights[i];
+            }
+          }
+
+          child1 = new Chromosome(newWeightsA, this.memories, this.outputIndex);
+          child2 = new Chromosome(newWeightsB, this.memories, this.outputIndex);
+
+          return [child1, child2];
+        };
+
+        Chromosome.prototype.asString = function() {
+          var str = " Weights:"
+          for (var i = 0; i < this.weights.length; ++i) {
+            str += this.weights[i].toFixed(5) + ",";
+          }
+          str += " Score:" + this.score;
+          str += " Memories:" + this.memories.length;
+          return str;
+        };
+
+        Chromosome.prototype.mutationRate = 0.1;
+        Chromosome.prototype.score = 0;
+
+        //-----------------------------------
+        var Population = function(size, createRandomChromosome) {
+          size = size || 20;
+          this.createRandomChromosome = createRandomChromosome;
+
+          this.chromosomes = [];
+          this.size = size;
+          this.matingSize = Math.max(2, size/3);
+          this.fill();
+        };
+
+        Population.prototype.fill = function() {
+          while (this.chromosomes.length < this.size) {
+            if (this.chromosomes.length < this.matingSize) {
+              this.chromosomes.push( this.createRandomChromosome() );
+            } else {
+              this.mate();
+            }
+          }
+        };
+
+        Population.prototype.sort = function() {
+            this.chromosomes.sort(function(a, b) { return a.calcScore() - b.calcScore(); }); // ascending
+        };
+
+        Population.prototype.kill = function() {
+            var target = Math.floor( this.elitism * this.chromosomes.length );
+            this.chromosomes.length = target;
+        };
+
+        Population.prototype.mate = function() {
+          if (this.chromosomes.length <= 1)
+            return;
+
+          var key1 = pickRandomProperty(this.chromosomes);
+          var key2 = key1;
+
+          while (key2 == key1) {
+            key2 = pickRandomProperty(this.chromosomes);
+          }
+
+          var children = this.chromosomes[key1].mateWith(this.chromosomes[key2]);
+          this.chromosomes = this.chromosomes.concat(children);
+        };
+
+        Population.prototype.resetScore = function() {
+          for (var i = this.chromosomes.length - 1; i >= 0; i--) {
+            this.chromosomes[i].score = null;
+          }
+        }
+
+        Population.prototype.generation = function(log) {
+            this.sort();
+            this.kill();
+            this.mate();  // mates 2 of the elite
+            this.fill();
+            this.sort();
+        };
+
+        Population.prototype.getBestScore = function() {
+          return this.chromosomes[0].score;
+        };
+
+        Population.prototype.calculateBestOutput = function(inputs) {
+          return this.chromosomes[0].calculateOutput(inputs);
+        };
+
+        Population.prototype.getBestAsString = function() {
+          return this.chromosomes[0].asString();
+        };
+
+        Population.prototype.elitism = 0.10;
+
+        //-----------------------------------
+        var canvas = null;
+        var ctx = null;
+        var ROBO_R = 10;
+
+        var inputs = new Array(4);
+        var outputs = [0, 0];
+        var memories = [];
+
+        var populationX = null;
+        var populationY = null;
+
+        var aiActive = false;
+
+        function normX(x) {
+          var halfWidth = canvas.width/2;
+          return (x - halfWidth)/halfWidth;
+        }
+
+        function normY(y) {
+          var halfHeight = canvas.height/2;
+          return (y - halfHeight)/halfHeight;
+        }
+
+        function unormX(x) {
+          var halfWidth = canvas.width/2;
+          return x*halfWidth + halfWidth;
+        }
+
+        function unormY(y) {
+          var halfHeight = canvas.height/2;
+          return y*halfHeight + halfHeight;
+        }
+
+        function reposition() {
+          for (var i = 0; i < inputs.length; ++i) {
+            inputs[i] = Math.random();
+          }
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          aiActive = false;
+        }
+
+        function trainPopulation() {
+          // because we are changing the inputs we must recalculate the score
+          populationX.resetScore();
+          populationY.resetScore();
+
+          for (var i = 0; i < 1000; ++i) {
+            populationX.generation();
+            populationY.generation();
+          }
+
+          document.getElementById("x").innerHTML = populationX.getBestAsString();
+          document.getElementById("y").innerHTML = populationY.getBestAsString();
+        }
+
+        function runAI() {
+          outputs[0] = populationX.calculateBestOutput(inputs);
+          outputs[1] = populationY.calculateBestOutput(inputs);
+          inputs[0] = clamp(inputs[0] + outputs[0], -1, 1);
+          inputs[1] = clamp(inputs[1] + outputs[1], -1, 1);
+        }
+
+        function createRandomX() {
+          var weights = new Array(inputs.length);
+          for (var i = weights.length - 1; i >= 0; i--) {
+            weights[i] = Math.random()*2 - 1;
+          }
+          weights[0] = -1;
+          weights[1] = 0;
+          weights[2] = 1;
+          weights[3] = 0;
+          return new Chromosome(weights, memories, 0);
+        }
+
+        function createRandomY() {
+          var weights = new Array(inputs.length);
+          for (var i = weights.length - 1; i >= 0; i--) {
+            weights[i] = Math.random()*2 - 1;
+          }
+          weights[0] = 0;
+          weights[1] = -1;
+          weights[2] = 0;
+          weights[3] = 1;
+          return new Chromosome(weights, memories, 1);
+        }
+
+        function mouseDown(e) {
+          var roboX = unormX(inputs[0]);
+          var roboY = unormY(inputs[1]);
+          var x = e.pageX - canvas.offsetLeft;
+          var y = e.pageY - canvas.offsetTop;
+          var d = Math.sqrt((x - roboX)*(x - roboX) + (y - roboY)*(y - roboY));
+
+          if (d < ROBO_R) {
+            document.addEventListener("mousemove", mouseMove);
+            document.addEventListener("mouseup", mouseUp);
+          }
+        }
+
+        var numIterations = 0;
+        function mouseMove(e) {
+          var x = e.pageX - canvas.offsetLeft;
+          var y = e.pageY - canvas.offsetTop;
+
+          var diffX = normX(x) - inputs[0];
+          var diffY = normY(y) - inputs[1];
+
+          outputs[0] = lerp(outputs[0], diffX, 0.3);
+          outputs[1] = lerp(outputs[1], diffY, 0.3);
+
+          inputs[0] += diffX;
+          inputs[1] += diffY;
+
+          if (numIterations++ % 20 === 0) {
+            memories.push({inputs: inputs.slice(), outputs: outputs.slice()});
+          }
+
+          trainPopulation();
+        }
+
+        function mouseUp(e) {
+          outputs[0] = 0;
+          outputs[1] = 0;
+
+          document.removeEventListener("mousemove", mouseMove);
+          document.removeEventListener("mouseup", mouseUp);
+        }
+
+        function draw() {
+          ctx.strokeStyle = "blue";
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(unormX(inputs[0]), unormY(inputs[1]), ROBO_R, 0, 2*Math.PI);
+          ctx.stroke();
+
+          ctx.fillStyle = "red";
+          ctx.beginPath();
+          ctx.arc(unormX(inputs[2]), unormY(inputs[3]), ROBO_R, 0, 2*Math.PI);
+          ctx.fill();
+
+          if (aiActive) {
+            runAI();
+          }
+
+          requestAnimationFrame(draw);
+        }
+
+        window.onload = function() {
+          canvas = document.getElementById("canvas");
+          ctx = canvas.getContext("2d");
+
+          reposition();
+
+          populationX = new Population(20, createRandomX);
+          populationY = new Population(20, createRandomY);
+
+          canvas.addEventListener("mousedown", mouseDown);
+
+          document.getElementById("reposition").addEventListener("click", reposition);
+          document.getElementById("runAI").addEventListener("click", function(e) {
+            reposition();
+            aiActive = true;
+          });
+
+          requestAnimationFrame(draw);
+        };
+
+      })(window);
+    </script>
+  </head>
+  <body>
+    <canvas id="canvas" width="400" height="400"></canvas>
+    <div></div>
+    <button id="reposition">Reposition</button>
+    <button id="runAI">Run AI</button>
+    <p>X: <b id="x">0</b></p>
+    <p>Y: <b id="y">0</b></p>
+  </body>
+</html>
