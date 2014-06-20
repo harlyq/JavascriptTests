@@ -118,7 +118,7 @@
           target.panZoom.clearPivot(e.changedTouches[i].identifier);
         }
 
-        if (target.panZoom.numPivots() === 0) {
+        if (target.panZoom.numPivots === 0) {
           document.removeEventListener("touchend", touchEnd);
           document.removeEventListener("touchmove", touchMove);
         }
