@@ -33,6 +33,7 @@
 
         //-----------------------------------
         var Chromosome = function(weights, memories, outputIndex) {
+          this.score = 0;
           this.weights = weights;
           this.memories = memories;
           this.outputIndex = outputIndex;
@@ -109,7 +110,6 @@
         };
 
         Chromosome.prototype.mutationRate = 0.1;
-        Chromosome.prototype.score = 0;
 
         //-----------------------------------
         var Population = function(size, createRandomChromosome) {
