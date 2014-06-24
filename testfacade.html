@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="text/javascript">
+    (function() {
+      var canvas = null;
+      var ctx = null;
+      var offset = {x: 0, y: 0};
+      var area = {x: 100, y: 200};
+
+      var splitX = function() {
+        return {type: "splitX", list: arguments};
+      };
+
+      var splitY = function() {
+        return {type: "splitY", list: arguments};
+      };
+
+      var overlay = function() {
+        return {type: "overlay", list: arguments};
+      };
+
+      var box = function(left, top, right, bottom, col) {
+        return {type: "box", left: left, top: top, right: right, bottom: bottom, col: col};
+      };
+
+      var drawBox = function(b) {
+        var scaleX = 20;
+        var scaleY = 30;
+        ctx.fillStyle = b.col;
+        var x = Math.floor(offset.x + b.left*area.x);
+        var y = Math.floor(offset.y + b.top*area.y);
+        var w = Math.floor((b.right - b.left)*area.x);
+        var h = Math.floor((b.bottom - b.top)*area.y);
+        ctx.fillRect(x, y, w, h);
+      };
+
+      var draw = function(root) {
+        switch (root.type) {
+          case "splitX":
+            var numList = root.list.length;
+            var oldOffset = offset.x;
+            var oldArea = area.x;
+            area.x = area.x/numList;
+            for (var i = 0; i < numList; ++i) {
+              draw(root.list[i]);
+              offset.x += area.x;
+            }
+            offset.x = oldOffset;
+            area.x = oldArea;
+            break;
+
+          case "splitY":
+            var numList = root.list.length;
+            var oldOffset = offset.y;
+            var oldArea = area.y;
+            area.y = area.y/numList;
+            for (var i = 0; i < numList; ++i) {
+              draw(root.list[i]);
+              offset.y += area.y;
+            }
+            offset.y = oldOffset;
+            area.y = oldArea;
+            break;
+
+          case "overlay":
+            var numList = root.list.length;
+            for (var i = 0; i < numList; ++i) {
+              draw(root.list[i]);
+            }
+            break;
+
+          case "box":
+            drawBox(root);
+        }
+      }
+
+      window.onload = function() {
+        canvas = document.getElementById("canvas");
+        ctx = canvas.getContext("2d");
+
+        wallImage = box(0, 0, 1, 1, "red");
+        windowImage = box(0.2, 0.2, 0.8, 0.8, "white");
+        doorImage = box(0.25, 0.3, 0.75, 1.0, "green");
+        corniceImage = box(0, 0, 1.0, 0.05, "#e0e0e0");
+
+        door = overlay(wallImage, doorImage);
+        fenetre = overlay(wallImage, windowImage);
+        mainMiddle = splitX(fenetre, fenetre, fenetre);
+        mainBottom = splitX(fenetre, door, fenetre);
+        topFloor = splitX(fenetre, fenetre, fenetre);
+        middleFloor = overlay(mainMiddle, corniceImage);
+        bottomFloor = overlay(mainBottom, corniceImage);
+        facade = splitY(topFloor, middleFloor, bottomFloor);
+
+        draw(facade);
+      };
+    })();
+    </script>
+  </head>
+  <body>
+    <canvas id="canvas" width="400" height="400"></canvas>
+  </body>
+</html>
