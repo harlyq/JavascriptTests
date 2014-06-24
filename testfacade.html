@@ -3,10 +3,23 @@
   <head>
     <script type="text/javascript">
     (function() {
+      function assert(cond) {
+        if (!cond)
+          debugger;
+      }
+
+      var sgn = function(x) {
+        if (x < 0) return -1;
+        else if (x === 0) return 0;
+        else return 1;
+      }
+
       var canvas = null;
       var ctx = null;
       var offset = {x: 0, y: 0};
-      var area = {x: 100, y: 200};
+      var area = {w: 100, h: 200};
+      var H = 0;
+      var W = 0;
 
       var splitX = function() {
         return {type: "splitX", list: arguments};
@@ -20,58 +33,213 @@
         return {type: "overlay", list: arguments};
       };
 
+      var absoluteBox = function(alignX, alignY, width, height, col) {
+        return {type: "absoluteBox", alignX: alignX, alignY: alignY, width: width, height: height, col: col};
+      };
+
       var box = function(left, top, right, bottom, col) {
         return {type: "box", left: left, top: top, right: right, bottom: bottom, col: col};
       };
 
-      var drawBox = function(b) {
-        var scaleX = 20;
-        var scaleY = 30;
-        ctx.fillStyle = b.col;
-        var x = Math.floor(offset.x + b.left*area.x);
-        var y = Math.floor(offset.y + b.top*area.y);
-        var w = Math.floor((b.right - b.left)*area.x);
-        var h = Math.floor((b.bottom - b.top)*area.y);
-        ctx.fillRect(x, y, w, h);
+      var absoluteH = function(h, root) {
+        return {type: "absoluteH", h: h, root: root};
       };
 
-      var draw = function(root) {
+      var absoluteW = function(w, root) {
+        return {type: "absoluteW", w: w, root: root};
+      };
+
+      var repeat = function(count, root) {
+        return {type: "repeat", count: count, root: root};
+      }
+
+      var randomInt = function(min, max) {
+        return {type: "randomInt", min: min, max: max};
+      }
+
+      var randomElement = function() {
+        return {type: "randomElement", list: arguments};
+      }
+
+      var align = function(border, root) {
+        return {type: "align", border: border, root: root};
+      }
+
+      var all = function() {
+        return {type: "all", list: arguments};
+      }
+
+      var setVariable = function(variable, value) {
+        return {type: "setVariable", variable: variable, value: value};
+      }
+
+      var variable = function(variable) {
+        return {type: "variable", variable: variable};
+      }
+
+      var drawAbsoluteBox = function(b) {
+        ctx.fillStyle = buildValue(b.col);
+        var x = 0;
+        var y = 0;
+        switch (b.alignX) {
+          case "left":   x = offset.x; break;
+          case "center": x = offset.x + area.w*0.5 - b.width*0.5; break;
+          case "right":  x = offset.x + area.w - b.width; break;
+        }
+        switch (b.alignY) {
+          case "top":    y = offset.y; break;
+          case "center": y = offset.y + area.h*0.5 - b.height*0.5; break;
+          case "bottom": y = offset.y + area.h - b.height; break;
+        }
+        if (alignment === "bottom") 
+          y = H - 2*offset.y - area.h + y;
+
+        ctx.fillRect(~~x, ~~y, ~~b.width, ~~b.height);
+      };
+
+      var drawBox = function(b) {
+        ctx.fillStyle = buildValue(b.col);
+        var x = offset.x + b.left*area.w;
+        var y = offset.y + b.top*area.h;
+        var w = (b.right - b.left)*area.w;
+        var h = (b.bottom - b.top)*area.h;
+        if (alignment === "bottom") 
+          y = H - 2*offset.y - area.h + y;
+
+        ctx.fillRect(~~x, ~~y, ~~w, ~~h);
+      };
+
+      var buildValue = function(root) {
+        if (typeof root === "object") {
+          switch (root.type) {
+            case "randomInt":
+              return ~~(Math.random()*(root.max - root.min + 1)) + root.min;
+            case "randomElement":
+              return buildValue(root.list[~~(Math.random()*root.list.length)]);
+            case "variable":
+              return buildValue(variables[root.variable]);
+          }
+          assert(0); // unrecognized number
+        }
+        return root;
+      }
+
+      var buildList = function(oldList) {
+        var list = [];
+        for (var i = 0; i < oldList.length; ++i) {
+          var item = oldList[i];
+          switch (item.type) {
+            case "repeat":
+              var count = buildValue(item.count);
+              for (var j = 0; j < count; ++j) {
+                list.push(item.root);
+              }
+              break;
+
+            case "randomElement":
+              list.push(item.list[~~(Math.random()*item.list.length)]);
+              break;
+
+            default:
+              list.push(item);
+          }
+        }
+        return list;
+      }
+
+      var draw = function(root, x, y, w, h) {
+        area.w = w;
+        area.h = h;
+        offset.x = x;
+        offset.y = y;
+        H = h;
+        W = w;
+        alignment = "top";
+        variables = {};
+        drawInternal(root);
+      }
+
+      var drawInternal = function(root) {
         switch (root.type) {
+          case "all":
+            for (var i = 0; i < root.list.length; ++i) {
+              drawInternal(root.list[i]);
+            }
+            break;
+
+          case "align":
+            alignment = root.border;
+            drawInternal(root.root);
+            break;
+
+          case "setVariable":
+            variables[root.variable] = buildValue(root.value);
+            break;
+
           case "splitX":
-            var numList = root.list.length;
+            var list = buildList(root.list);
             var oldOffset = offset.x;
-            var oldArea = area.x;
-            area.x = area.x/numList;
-            for (var i = 0; i < numList; ++i) {
-              draw(root.list[i]);
-              offset.x += area.x;
+            var oldArea = area.w;
+            var splitWidth = area.w/list.length;
+            for (var i = 0; i < list.length; ++i) {
+              area.w = splitWidth;
+              drawInternal(list[i]);
+              offset.x += area.w; // use area.w rather than splitWidth in case draw() changed it
             }
             offset.x = oldOffset;
-            area.x = oldArea;
+            area.w = oldArea;
             break;
 
           case "splitY":
-            var numList = root.list.length;
+            var list = buildList(root.list);
+            if (alignment === "bottom" || alignment === "bottom") {
+              list.reverse();
+            }
+
             var oldOffset = offset.y;
-            var oldArea = area.y;
-            area.y = area.y/numList;
-            for (var i = 0; i < numList; ++i) {
-              draw(root.list[i]);
-              offset.y += area.y;
+            var oldArea = area.h;
+            var splitHeight = area.h/list.length;
+            for (var i = 0; i < list.length; ++i) {
+              area.h = splitHeight;
+              drawInternal(list[i]);
+              offset.y += area.h; // use area.h rather than splitHeight in case draw() changed it
             }
             offset.y = oldOffset;
-            area.y = oldArea;
+            area.h = oldArea;
             break;
 
           case "overlay":
-            var numList = root.list.length;
-            for (var i = 0; i < numList; ++i) {
-              draw(root.list[i]);
+            var list = buildList(root.list);
+            for (var i = 0; i < list.length; ++i) {
+              drawInternal(list[i]);
             }
+            break;
+
+          case "absoluteH":
+            var areaH = buildValue(root.h);
+            area.h = areaH;
+            drawInternal(root.root);
+            area.h = areaH;
+            break;
+
+          case "absoluteW":
+            var areaW = buildValue(root.w);
+            area.w = areaW;
+            drawInternal(root.root);
+            area.w = areaW;
+            break;
+
+          case "absoluteBox":
+            drawAbsoluteBox(root);
             break;
 
           case "box":
             drawBox(root);
+            break;
+
+          case "repeat":
+            assert(0); // only functions with lists can use repeat
+            break;
         }
       }
 
@@ -79,26 +247,30 @@
         canvas = document.getElementById("canvas");
         ctx = canvas.getContext("2d");
 
-        wallImage = box(0, 0, 1, 1, "red");
-        windowImage = box(0.2, 0.2, 0.8, 0.8, "white");
-        doorImage = box(0.25, 0.3, 0.75, 1.0, "green");
-        corniceImage = box(0, 0, 1.0, 0.05, "#e0e0e0");
+        var wallImage = box(0, 0, 1, 1, variable("col"));
+        var windowImage = absoluteBox("center", "center", 22, 30, "white");
+        var doorImage = absoluteBox("center", "bottom", 25, 40, "#50e0e0");
+        var corniceImage = box(0, 0, 1.0, 0.05, "#e0e0e0");
 
-        door = overlay(wallImage, doorImage);
-        fenetre = overlay(wallImage, windowImage);
-        mainMiddle = splitX(fenetre, fenetre, fenetre);
-        mainBottom = splitX(fenetre, door, fenetre);
-        topFloor = splitX(fenetre, fenetre, fenetre);
-        middleFloor = overlay(mainMiddle, corniceImage);
-        bottomFloor = overlay(mainBottom, corniceImage);
-        facade = splitY(topFloor, middleFloor, bottomFloor);
+        var door = overlay(wallImage, doorImage);
+        var fenetre = overlay(wallImage, windowImage);
+        var mainMiddle = splitX(repeat(3, fenetre));
+        var mainBottom = splitX(fenetre, door, fenetre);
+        var topFloor = absoluteH(50, splitX(fenetre, fenetre, fenetre));
+        var middleFloor = absoluteH(60, overlay(mainMiddle, corniceImage));
+        var bottomFloor = absoluteH(70, overlay(mainBottom, corniceImage));
+        var facade = splitY(topFloor, repeat(randomInt(2,4), middleFloor), bottomFloor);
+        var setColor = setVariable("col", randomElement("red", "pink", "orange"));
+        var building = all(setColor, facade);
 
-        draw(facade);
+        draw(align("bottom", building), 0, 0, 100, 400);
+        draw(align("bottom", building), 120, 0, 200, 400);
+        draw(align("bottom", building), 340, 0, 150, 400);
       };
     })();
     </script>
   </head>
   <body>
-    <canvas id="canvas" width="400" height="400"></canvas>
+    <canvas id="canvas" width="600" height="600"></canvas>
   </body>
 </html>
