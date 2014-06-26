@@ -14,23 +14,44 @@
         else return 1;
       }
 
+      var extend = function(obj, props) {
+        for (var key in props) {
+          obj[key] = props[key];
+        }
+      };
+
+      var copy = function(obj) {
+        return JSON.parse(JSON.stringify(obj));
+      };
+
       var canvas = null;
       var ctx = null;
       var offset = {x: 0, y: 0};
       var area = {w: 100, h: 200};
+      var angle = {yaw: 0}; // radians
       var H = 0;
       var W = 0;
+      var variables = {};
+      var stores = [];
+
+      var iterate = function(count, term) {
+        return {type: "iterate", count: count, term: term};
+      };
 
       var splitX = function() {
-        return {type: "splitX", list: arguments};
+        return {type: "splitX", list: Array.prototype.slice.call(arguments, 0, arguments.length)};
       };
 
       var splitY = function() {
-        return {type: "splitY", list: arguments};
+        return {type: "splitY", list: Array.prototype.slice.call(arguments, 0, arguments.length)};
+      };
+
+      var splitYaw = function(deg) {
+        return {type: "splitYaw", deg: deg, list: Array.prototype.slice.call(arguments, 1, arguments.length)};
       };
 
       var overlay = function() {
-        return {type: "overlay", list: arguments};
+        return {type: "overlay", list: Array.prototype.slice.call(arguments, 0, arguments.length)};
       };
 
       var absoluteBox = function(alignX, alignY, width, height, col) {
@@ -41,16 +62,24 @@
         return {type: "box", left: left, top: top, right: right, bottom: bottom, col: col};
       };
 
-      var absoluteH = function(h, root) {
-        return {type: "absoluteH", h: h, root: root};
+      var forward = function(width, height, col) {
+        return {type: "forward", width: width, height: height, col: col};
       };
 
-      var absoluteW = function(w, root) {
-        return {type: "absoluteW", w: w, root: root};
+      var absoluteH = function(h, term) {
+        return {type: "absoluteH", h: h, term: term};
       };
 
-      var repeat = function(count, root) {
-        return {type: "repeat", count: count, root: root};
+      var absoluteW = function(w, term) {
+        return {type: "absoluteW", w: w, term: term};
+      };
+
+      var repeat = function(count, term) {
+        return {type: "repeat", count: count, term: term};
+      }
+
+      var random = function(min, max) {
+        return {type: "random", min: min, max: max};
       }
 
       var randomInt = function(min, max) {
@@ -58,15 +87,11 @@
       }
 
       var randomElement = function() {
-        return {type: "randomElement", list: arguments};
+        return {type: "randomElement", list: Array.prototype.slice.call(arguments, 0, arguments.length)};
       }
 
-      var align = function(border, root) {
-        return {type: "align", border: border, root: root};
-      }
-
-      var all = function() {
-        return {type: "all", list: arguments};
+      var sequence = function() {
+        return {type: "sequence", list: Array.prototype.slice.call(arguments, 0, arguments.length)};
       }
 
       var setVariable = function(variable, value) {
@@ -77,110 +102,201 @@
         return {type: "variable", variable: variable};
       }
 
+      var store = function() {
+        return {type: "store"};
+      }
+
+      var restore = function() {
+        return {type: "restore"};
+      }
+
+      var turnLeft = function(deg) {
+        return {type: "turnLeft", deg: deg};
+      }
+
+      var turnRight = function(deg) {
+        return {type: "turnRight", deg: deg};
+      }
+
       var drawAbsoluteBox = function(b) {
-        ctx.fillStyle = buildValue(b.col);
-        var x = 0;
-        var y = 0;
+        var col = buildValue(b.col);
+        if (col !== null)
+          ctx.fillStyle = col;
+
+        var x = offset.x;
+        var y = offset.y;
+        var boxX = 0;
+        var boxY = 0;
         switch (b.alignX) {
-          case "left":   x = offset.x; break;
-          case "center": x = offset.x + area.w*0.5 - b.width*0.5; break;
-          case "right":  x = offset.x + area.w - b.width; break;
+          case "left":   boxX = -area.w*0.5; break;
+          case "center": boxX = -b.width*0.5; break;
+          case "right":  boxX =  area.w*0.5 - b.width; break;
         }
         switch (b.alignY) {
-          case "top":    y = offset.y; break;
-          case "center": y = offset.y + area.h*0.5 - b.height*0.5; break;
-          case "bottom": y = offset.y + area.h - b.height; break;
+          case "top":    boxY = area.h - b.height; break;
+          case "center": boxY = area.h*0.5 - b.height*0.5; break;
+          case "bottom": boxY = 0; break;
         }
-        if (alignment === "bottom") 
-          y = H - 2*offset.y - area.h + y;
 
-        ctx.fillRect(~~x, ~~y, ~~b.width, ~~b.height);
+        x = ~~x;
+        y = ~~y;
+
+        ctx.translate(x, y);
+        ctx.rotate(angle.yaw);
+        ctx.fillRect(~~boxX, ~~boxY, ~~b.width, ~~b.height);
+        ctx.rotate(-angle.yaw);
+        ctx.translate(-x, -y);
       };
 
       var drawBox = function(b) {
-        ctx.fillStyle = buildValue(b.col);
-        var x = offset.x + b.left*area.w;
-        var y = offset.y + b.top*area.h;
-        var w = (b.right - b.left)*area.w;
-        var h = (b.bottom - b.top)*area.h;
-        if (alignment === "bottom") 
-          y = H - 2*offset.y - area.h + y;
+        var col = buildValue(b.col);
+        if (col !== null)
+          ctx.fillStyle = col;
 
-        ctx.fillRect(~~x, ~~y, ~~w, ~~h);
+        var x = offset.x;
+        var y = offset.y;
+
+        var boxW = (b.right - b.left)*area.w;
+        var boxH = (b.bottom - b.top)*area.h;
+        var boxX = area.w*(b.left - 0.5);
+        var boxY = area.h*(1 - b.bottom);
+
+        x = ~~x;
+        y = ~~y;
+
+        ctx.translate(x, y);
+        ctx.rotate(angle.yaw);
+        ctx.fillRect(~~boxX, ~~boxY, ~~boxW, ~~boxH);
+        ctx.rotate(-angle.yaw);
+        ctx.translate(-x, -y);
       };
 
-      var buildValue = function(root) {
-        if (typeof root === "object") {
-          switch (root.type) {
+      var drawForward = function(line) {
+        var col = buildValue(line.col);
+        if (col !== null)
+          ctx.fillStyle = col;
+
+        var w = Math.max(1, line.width*area.w);
+        var h = line.height*area.h;
+
+        var x = offset.x;
+        var y = offset.y;
+        var halfW = ~~(w*0.5);
+
+        x = ~~x;
+        y = ~~y;
+
+        ctx.translate(x, y);
+        ctx.rotate(angle.yaw);
+        ctx.fillRect(-halfW*0.5, 0, ~~w, ~~h);
+        ctx.rotate(-angle.yaw);
+        ctx.translate(-x, -y);
+      }
+
+      var buildValue = function(term) {
+        if (typeof term === "object") {
+          switch (term.type) {
             case "randomInt":
-              return ~~(Math.random()*(root.max - root.min + 1)) + root.min;
+              return ~~(Math.random()*(term.max - term.min + 1)) + term.min;
+            case "random":
+              return Math.random()*(term.max - term.min) + term.min;
             case "randomElement":
-              return buildValue(root.list[~~(Math.random()*root.list.length)]);
+              return buildValue(term.list[~~(Math.random()*term.list.length)]);
             case "variable":
-              return buildValue(variables[root.variable]);
+              return buildValue(variables[term.variable]);
           }
           assert(0); // unrecognized number
         }
-        return root;
+        return term;
       }
 
       var buildList = function(oldList) {
         var list = [];
         for (var i = 0; i < oldList.length; ++i) {
           var item = oldList[i];
-          switch (item.type) {
-            case "repeat":
-              var count = buildValue(item.count);
-              for (var j = 0; j < count; ++j) {
-                list.push(item.root);
-              }
-              break;
-
-            case "randomElement":
-              list.push(item.list[~~(Math.random()*item.list.length)]);
-              break;
-
-            default:
-              list.push(item);
-          }
+          list = list.concat(buildListInternal(item));
         }
         return list;
       }
 
-      var draw = function(root, x, y, w, h) {
-        area.w = w;
-        area.h = h;
-        offset.x = x;
-        offset.y = y;
-        H = h;
-        W = w;
-        alignment = "top";
-        variables = {};
-        drawInternal(root);
-      }
-
-      var drawInternal = function(root) {
-        switch (root.type) {
-          case "all":
-            for (var i = 0; i < root.list.length; ++i) {
-              drawInternal(root.list[i]);
+      var buildListInternal = function(item) {
+        var list = [];
+        switch (item.type) {
+          case "repeat":
+            var count = buildValue(item.count);
+            for (var j = 0; j < count; ++j) {
+              list = list.concat(buildListInternal(item.term));
             }
             break;
 
-          case "align":
-            alignment = root.border;
-            drawInternal(root.root);
+          case "randomElement":
+            list = list.concat(buildListInternal(item.list[~~(Math.random()*item.list.length)]));
+            break;
+
+          default:
+            list.push(item);
+        }
+
+        return list;
+      }
+
+      var draw = function(term, x, y, w, h) {
+        area.w = w;
+        area.h = h;
+        offset.x = 0;
+        offset.y = 0;
+        angle.yaw = 0;
+        H = h;
+        W = w;
+        iterateCount = 0;
+        iterateMax = 0;
+        variables = {};
+        stores = [];
+
+        ctx.translate(x, y);
+        ctx.scale(1, -1); // y is up
+        drawInternal(term);
+        ctx.scale(1, -1);
+        ctx.translate(-x, -y);
+      }
+
+      var drawInternal = function(term) {
+        assert(term);
+
+        // if there are iterations then use the 'iter' term, rather than the standard term.
+        var iterating = false;
+        if (term.iter && iterateCount < iterateMax) {
+          iterateCount++;
+          term = term.iter;
+          iterating = true;
+          area.w *= 0.5;
+          area.h *= 0.5;
+        }
+
+        switch (term.type) {
+          case "iterate":
+            iterateMax = term.count;
+            drawInternal(term.term);
+            iterateMax = 0;
+            break;
+
+          case "sequence":
+            var list = buildList(term.list);
+            for (var i = 0; i < list.length; ++i) {
+              drawInternal(list[i]);
+            }
             break;
 
           case "setVariable":
-            variables[root.variable] = buildValue(root.value);
+            variables[term.variable] = buildValue(term.value);
             break;
 
           case "splitX":
-            var list = buildList(root.list);
+            var list = buildList(term.list);
             var oldOffset = offset.x;
             var oldArea = area.w;
             var splitWidth = area.w/list.length;
+            offset.x -= (list.length - 1)*splitWidth*0.5;
             for (var i = 0; i < list.length; ++i) {
               area.w = splitWidth;
               drawInternal(list[i]);
@@ -191,11 +307,7 @@
             break;
 
           case "splitY":
-            var list = buildList(root.list);
-            if (alignment === "bottom" || alignment === "bottom") {
-              list.reverse();
-            }
-
+            var list = buildList(term.list);
             var oldOffset = offset.y;
             var oldArea = area.h;
             var splitHeight = area.h/list.length;
@@ -208,38 +320,88 @@
             area.h = oldArea;
             break;
 
+          case "splitYaw":
+            var list = buildList(term.list);
+            var oldYaw = angle.yaw;
+            var oldOffset = copy(offset);
+            var oldArea = copy(area);
+            var splitYaw = buildValue(term.deg)/180*Math.PI;
+            var firstYaw = -splitYaw*(list.length - 1)*0.5;
+            for (var i = 0; i < list.length; ++i) {
+              angle.yaw = firstYaw + i*splitYaw;
+              drawInternal(list[i]);
+
+              extend(area, oldArea);
+              extend(offset, oldOffset);
+            }
+            angle.yaw = oldYaw;
+            break;
+
           case "overlay":
-            var list = buildList(root.list);
+            var list = buildList(term.list);
             for (var i = 0; i < list.length; ++i) {
               drawInternal(list[i]);
             }
             break;
 
           case "absoluteH":
-            var areaH = buildValue(root.h);
+            var areaH = buildValue(term.h);
             area.h = areaH;
-            drawInternal(root.root);
+            drawInternal(term.term);
             area.h = areaH;
             break;
 
           case "absoluteW":
-            var areaW = buildValue(root.w);
+            var areaW = buildValue(term.w);
             area.w = areaW;
-            drawInternal(root.root);
+            drawInternal(term.term);
             area.w = areaW;
             break;
 
           case "absoluteBox":
-            drawAbsoluteBox(root);
+            drawAbsoluteBox(term);
             break;
 
           case "box":
-            drawBox(root);
+            drawBox(term);
+            break;
+
+          case "forward":
+            drawForward(term);
+
+            // 0 deg is up, +ve is anticlockwise
+            offset.y += Math.cos(angle.yaw)*term.height*area.h;
+            offset.x -= Math.sin(angle.yaw)*term.height*area.h;
             break;
 
           case "repeat":
             assert(0); // only functions with lists can use repeat
             break;
+
+          case "store":
+            stores.push({offset: copy(offset), area: copy(area), angle: copy(angle)});
+            break;
+
+          case "restore":
+            var old = stores.pop();
+            offset = old.offset;
+            area = old.area;
+            angle = old.angle;
+            break;
+
+          case "turnLeft":
+            angle.yaw += buildValue(term.deg)/180*Math.PI;
+            break;
+
+          case "turnRight":
+            angle.yaw -= buildValue(term.deg)/180*Math.PI;
+            break;
+        }
+
+        if (iterating) {
+          area.w *= 2;
+          area.h *= 2;
+          iterateCount--;
         }
       }
 
@@ -259,13 +421,18 @@
         var topFloor = absoluteH(50, splitX(fenetre, fenetre, fenetre));
         var middleFloor = absoluteH(60, overlay(mainMiddle, corniceImage));
         var bottomFloor = absoluteH(70, overlay(mainBottom, corniceImage));
-        var facade = splitY(topFloor, repeat(randomInt(2,4), middleFloor), bottomFloor);
+        var facade = splitY(bottomFloor, repeat(randomInt(2,4), middleFloor), topFloor);
         var setColor = setVariable("col", randomElement("red", "pink", "orange"));
-        var building = all(setColor, facade);
+        var building = sequence(setColor, facade);
 
-        draw(align("bottom", building), 0, 0, 100, 400);
-        draw(align("bottom", building), 120, 0, 200, 400);
-        draw(align("bottom", building), 340, 0, 150, 400);
+        var branch = forward(0.1, 0.4, "brown");
+        branch.iter = sequence(branch, store(), turnLeft(randomInt(-45, 45)), branch, restore(), turnRight(randomInt(-45, 45)), branch);
+
+        //var tree = sequence(branch, splitYaw(30, repeat(3, sequence(branch, splitYaw(randomInt(1,3), branch)))));
+        var tree = branch;
+
+        draw(building, 50, 400, 100, 400);
+        draw(iterate(4, tree), 200, 400, 250, 400);
       };
     })();
     </script>
