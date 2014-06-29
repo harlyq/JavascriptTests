@@ -1,0 +1,676 @@
+<!DOCTYPE>
+<html>
+  <head>
+    <script type="text/javascript">
+    (function() {
+      var canvas = null;
+      var ctx = null;
+      var CARD_WIDTH = 90;
+      var CARD_HEIGHT = 150;
+      var DOUBLE_TAP_TIME_MS = 800;
+      var MOUSE_CANCEL_TAP_DISTANCE = 10;
+      var TOUCH_CANCEL_TAP_DISTANCE = 30;
+      var HOLD_TIME_MS = 500;
+
+      //---------------------------
+      var logElem = null;
+      function log(msg) {
+        if (logElem === null)
+          logElem = document.getElementById("log");
+        if (logElem !== null)
+          logElem.innerHTML = msg + "<br \>" + logElem.innerHTML.substr(0, 300);
+      }
+
+      //---------------------------
+      function InteractionHelper(elem, listener) {
+        this.elem = elem;
+        this.listener = listener;
+        this.tapTimeMS = 0;
+        this.tapPosition = {x:-1, y:-1};
+  
+        var self = this;
+        elem.addEventListener("mousedown", function(e) {self.mouseDown(e);});
+        elem.addEventListener("touchstart", function(e) {self.touchStart(e);});
+      }
+
+      InteractionHelper.State = Object.freeze({Start: 2, Move: 3, End: 4, DoubleTap: 5, Held: 6});
+
+      InteractionHelper.prototype.heldTimeout = function() {
+        interactionEvent = {
+          x: this.lastX,
+          y: this.lastY,
+          deltaX: 0,
+          deltaY: 0,
+          pinchDistance: 0,
+          state: InteractionHelper.State.Held,
+          target: this.elem,
+          origin: this.elem
+        };
+        this.listener.onPointer(interactionEvent);
+      };
+
+      InteractionHelper.prototype.startHeldTimer = function() {
+        clearTimeout(this.heldID);
+        var self = this;
+        this.heldID = setTimeout(function() {self.heldTimeout()}, HOLD_TIME_MS);
+      };
+
+      InteractionHelper.prototype.stopHeldTimer = function() {
+        clearTimeout(this.heldID);
+        this.heldID = 0;
+      };
+
+      InteractionHelper.prototype.mouseDown = function(e) {
+        e.preventDefault();
+
+        var self = this;
+        this.mouseMoveHandler = function(e) {self.mouseMove(e)};
+        this.mouseUpHandler = function(e) {self.mouseUp(e)};
+        document.addEventListener("mousemove", this.mouseMoveHandler);
+        document.addEventListener("mouseup", this.mouseUpHandler);
+
+        var x = e.pageX - this.elem.offsetLeft;
+        var y = e.pageY - this.elem.offsetTop;
+
+        var doubleTap = false;
+        var timeMS = Date.now();
+
+        if (timeMS - this.tapTimeMS < DOUBLE_TAP_TIME_MS) {
+          if (Math.abs(this.tapPosition.x - x) < MOUSE_CANCEL_TAP_DISTANCE && 
+              Math.abs(this.tapPosition.y - y) < MOUSE_CANCEL_TAP_DISTANCE) {
+            doubleTap = true;
+            timeMS = 0;
+          } else {
+            if (this.tapTimeMS !== 0) {
+              timeMS = 0;
+            }
+          }
+        }
+        this.startHeldTimer();
+        this.tapTimeMS = timeMS;
+        this.tapPosition.x = x;
+        this.tapPosition.y = y;
+        this.moveStarted = false;
+
+        interactionEvent = {
+          x: x,
+          y: y,
+          deltaX: 0,
+          deltaY: 0,
+          pinchDistance: 0,
+          state: (doubleTap ? InteractionHelper.State.DoubleTap : InteractionHelper.State.Start),
+          target: e.target,
+          origin: this.elem
+        };
+        this.listener.onPointer(interactionEvent);
+        this.lastX = x;
+        this.lastY = y;          
+      };
+
+      InteractionHelper.prototype.mouseMove = function(e) {
+        e.preventDefault();
+
+        var x = e.pageX - this.elem.offsetLeft;
+        var y = e.pageY - this.elem.offsetTop;
+
+        if (this.moveStarted ||
+            Math.abs(x - this.lastX) >= MOUSE_CANCEL_TAP_DISTANCE || 
+            Math.abs(y - this.lastY) >= MOUSE_CANCEL_TAP_DISTANCE) {
+          this.stopHeldTimer();
+          this.tapTimeMS = 0;
+          this.moveStarted = true;
+
+          interactionEvent = {
+            x: x,
+            y: y,
+            deltaX: x - this.lastX,
+            deltaY: y - this.lastY,
+            pinchDistance: 0,
+            state: InteractionHelper.State.Move,
+            target: e.target,
+            origin: this.elem
+          };
+          this.listener.onPointer(interactionEvent);
+          this.lastX = x;
+          this.lastY = y;
+        }
+      };
+
+      InteractionHelper.prototype.mouseUp = function(e) {
+        e.preventDefault();
+        document.removeEventListener("mousemove", this.mouseMoveHandler);
+        document.removeEventListener("mouseup", this.mouseUpHandler);
+
+        var x = e.pageX - this.elem.offsetLeft;
+        var y = e.pageY - this.elem.offsetTop;
+
+        interactionEvent = {
+          x: x,
+          y: y,
+          deltaX: x - this.lastX,
+          deltaY: y - this.lastY,
+          pinchDistance: 0,
+          state: InteractionHelper.State.End,
+          target: e.target,
+          origin: this.elem
+        };
+        this.listener.onPointer(interactionEvent);
+        this.lastX = 0;
+        this.lastY = 0;
+        this.stopHeldTimer();
+      };
+
+      InteractionHelper.prototype.getPinchInfo = function(e) {
+        var touches = e.touches;
+        if (touches.length === 0)
+          touches = e.changedTouches;
+
+        var x = 0;
+        var y = 0;
+        var distance = 0;
+
+        if (touches.length >= 2) {
+          var x2 = touches[1].pageX - this.elem.offsetLeft;
+          var y2 = touches[1].pageY - this.elem.offsetTop;
+
+          distance = Math.sqrt((x2 - x)*(x2 - x) + (y2 - y)*(y2 - y));
+          x = (x2 + x)*0.5;
+          y = (y2 + y)*0.5;
+        } else if (touches.length == 1) {
+          x = touches[0].pageX - this.elem.offsetLeft;
+          y = touches[0].pageY - this.elem.offsetTop;
+        }
+
+        return {x:x, y:y, distance:distance};
+      }
+
+      InteractionHelper.prototype.touchStart = function(e) {
+        e.preventDefault();
+
+        var self = this;
+        this.touchMoveHandler = function(e) {self.touchMove(e)};
+        this.touchEndHandler = function(e) {self.touchEnd(e)};
+        document.addEventListener("touchmove", this.touchMoveHandler);
+        document.addEventListener("touchend", this.touchEndHandler);
+
+        var pinch = this.getPinchInfo(e);
+        var doubleTap = false;
+        var timeMS = Date.now();
+
+        if (timeMS - this.tapTimeMS < DOUBLE_TAP_TIME_MS) {
+          if (Math.abs(this.tapPosition.x - pinch.x) < TOUCH_CANCEL_TAP_DISTANCE && 
+              Math.abs(this.tapPosition.y - pinch.y) < TOUCH_CANCEL_TAP_DISTANCE) {
+            doubleTap = true;
+            timeMS = 0;
+          } else {
+            if (this.tapTimeMS !== 0)
+              timeMS = 0;
+          }
+        }
+        this.startHeldTimer();
+        this.tapTimeMS = timeMS;
+        this.tapPosition.x = pinch.x;
+        this.tapPosition.y = pinch.y;
+        this.moveStarted = false;
+
+        interactionEvent = {
+          x: pinch.x,
+          y: pinch.y,
+          deltaX: 0,
+          deltaY: 0,
+          pinchDistance: pinch.distance,
+          state: (doubleTap ? InteractionHelper.State.DoubleTap : InteractionHelper.State.Start),
+          target: e.target,
+          origin: this.elem
+        };
+        this.listener.onPointer(interactionEvent);
+        this.lastX = pinch.x;
+        this.lastY = pinch.y;          
+      };
+
+      InteractionHelper.prototype.touchMove = function(e) {
+        e.preventDefault();
+
+        var x = e.pageX - this.elem.offsetLeft;
+        var y = e.pageY - this.elem.offsetTop;
+
+        if (this.moveStarted ||
+            Math.abs(x - this.lastX) > TOUCH_CANCEL_TAP_DISTANCE || 
+            Math.abs(y - this.lastY) > TOUCH_CANCEL_TAP_DISTANCE) {
+          this.moveStarted = true;
+          var pinch = this.getPinchInfo(e);
+
+          interactionEvent = {
+            x: pinch.x,
+            y: pinch.y,
+            deltaX: x - this.lastX,
+            deltaY: y - this.lastY,
+            pinchDistance: pinch.distance,
+            state: InteractionHelper.State.Move,
+            target: e.target,
+            origin: this.elem
+          };
+          this.listener.onPointer(interactionEvent);
+          this.lastX = pinch.x;
+          this.lastY = pinch.y;
+
+          this.startHeldTimer();
+          this.tapTimeMS = 0;
+        }
+      };
+
+      InteractionHelper.prototype.touchEnd = function(e) {
+        e.preventDefault();
+        if (e.touches.length === 0) {
+          document.removeEventListener("touchmove", this.touchMoveHandler);
+          document.removeEventListener("touchup", this.touchEndHandler);
+        }
+
+        var x = e.pageX - this.elem.offsetLeft;
+        var y = e.pageY - this.elem.offsetTop;
+
+        var pinch = this.getPinchInfo(e);
+
+        interactionEvent = {
+          x: pinch.x,
+          y: pinch.y,
+          deltaX: x - this.lastX,
+          deltaY: y - this.lastY,
+          pinchDistance: pinch.distance,
+          state: InteractionHelper.State.End,
+          target: e.target,
+          origin: this.elem
+        };
+        this.listener.onPointer(interactionEvent);
+        this.lastX = 0;
+        this.lastY = 0;
+        this.stopHeldTimer();
+      };
+
+      //---------------------------
+      var deck = null;
+
+      function Game() {
+        this.image = new Image();
+        this.locations = [];
+        this.interactionHelper = new InteractionHelper(canvas, this);
+        this.state = Game.State.Setup;
+        this.player = 1;
+        this.playerCount = 2;
+        this.standardDeck = new Deck();
+        for (var i = 0; i < 52; ++i) {
+          this.standardDeck.addCard(new Card(i, CARD_WIDTH, CARD_HEIGHT));
+        }
+
+        var w = canvas.width;
+        var h = canvas.height;
+        this.pile = new Location("Pile", w*0.5, h*0.5, CARD_WIDTH + 10, CARD_HEIGHT + 10);
+        this.pile.setLayout(Location.Layout.Stack);
+        this.pile.faceDownRule = Location.FaceDownRule.AlwaysDown;
+
+        this.general = new Location("General", w*0.5, h*0.5, w, h);
+        this.general.faceDownRule = Location.FaceDownRule.StartUp;
+
+        this.drag = new Location("", 0, 0, 0, 0); // special location for dragging
+
+        this.addLocation(this.general);
+        this.addLocation(this.pile);
+
+        this.dragged = false;
+        this.dragCard = null;
+        this.startLocation = null;
+        this.dropLocation = null;
+      }
+
+      Game.State = Object.freeze({Invalid: 0, Setup: 3, Play: 4});
+
+      var offset = {x: 0, y: 0};
+      var zoomCard = null;
+      var startLocation = null;
+      var lastTimeMS = 0;
+      Game.prototype.onPointer = function(e) {
+        switch (e.state) {
+          case InteractionHelper.State.DoubleTap:
+            this.dragCard = this.getCardXY(e.x, e.y);
+            if (this.dragCard) {
+              this.dragCard.setFaceDown(!this.dragCard.isFaceDown);
+            }
+            zoomCard = null;
+            break;
+
+          case InteractionHelper.State.Start:
+            this.dragCard = this.getCardXY(e.x, e.y);
+            if (this.dragCard !== null) {
+              this.startLocation = this.dragCard.location;
+              offset.x = e.x - this.dragCard.x;
+              offset.y = e.y - this.dragCard.y;
+              this.dragged = false;
+            }
+            zoomCard = null;
+            break;
+
+          case InteractionHelper.State.Move:
+            if (this.dragCard !== null) {
+              this.drag.addCard(this.dragCard);
+              this.dragCard.x = e.x - offset.x;
+              this.dragCard.y = e.y - offset.y;
+              this.dragged = true;
+            }
+            zoomCard = this.dragCard;
+            break;
+
+          case InteractionHelper.State.End:
+            if (this.dragged) {
+              var location = this.getLocationXY(e.x, e.y);
+              if (location)
+                location.addCard(this.dragCard);
+              else
+                this.startLocation.addCard(this.dragCard);
+            }
+            this.startLocation = null;
+            this.dragCard = null;
+            this.dragged = false;
+            zoomCard = null;
+            break;
+
+          case InteractionHelper.State.Held:
+            zoomCard = this.dragCard;
+            break;
+        };
+      };
+
+      Game.prototype.update = function() {
+        switch (this.state) {
+          case Game.State.Invalid:
+            break;
+          case Game.State.Setup:
+            this.pile.addDeck(this.standardDeck);
+            this.pile.shuffle();
+            this.state = Game.State.Play;
+            break;
+          case Game.State.Play:
+            this.draw();
+            break;
+        }
+
+        var self = this;
+        requestAnimationFrame(function() {
+          self.update();
+        });
+      };
+
+      Game.prototype.addLocation = function(location) {
+        this.locations.push(location);
+      };
+
+      Game.prototype.removeLocation = function(location) {
+        var index = this.locations.indexOf(location);
+        if (index !== -1)
+          this.locations.splice(index, 1);
+      };
+
+      Game.prototype.getCardXY = function(x, y) {
+        // last locations are drawn on top
+        for (var i = this.locations.length - 1; i >= 0; i--) {
+          var location = this.locations[i];
+          var card = location.getCardXY(x, y);
+          if (card)
+            return card;
+        }
+
+        return null;
+      };
+
+      Game.prototype.getLocationXY = function(x, y) {
+        // last locations are drawn on top
+        for (var i = this.locations.length - 1; i >= 0; i--) {
+          var location = this.locations[i];
+          if (location.isInsideXY(x, y))
+            return location;
+        }
+
+        return null;
+      };
+
+      Game.prototype.draw = function() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(this.image, 0, 0);
+
+        for (var i = 0; i < this.locations.length; i++) {
+          var location = this.locations[i];
+          location.draw();
+        }
+        this.drag.draw();  // always on top
+      };
+
+      //---------------------------
+      function Deck() {
+        this.cards = [];
+      }
+
+      Deck.prototype.addCard = function(card) {
+        this.cards.push(card);
+      };
+
+      //---------------------------
+      function Location(name, x, y, w, h) {
+        this.name = name;
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.cards = [];
+        this.layout = Location.Layout.None;
+        this.pause = 0;
+        this.faceDownRule = Location.FaceDownRule.None;
+      }
+
+      Location.FaceDownRule = Object.freeze({None: 0, AlwaysDown: 1, AlwaysUp: 2, StartDown: 3, StartUp: 4})
+      Location.Layout = Object.freeze({None: 0, Stack: 1});
+
+      Location.prototype.addDeck = function(deck) {
+        this.pauseLayout();
+        for (var i = 0; i < deck.cards.length; ++i) {
+          var card = deck.cards[i];
+          this.addCard(card);
+        }
+        this.unpauseLayout();
+      }
+
+      Location.prototype.addCard = function(card) {
+        if (card.location)
+          card.location.removeCard(card);
+
+        this.cards.push(card);
+        card.location = this;
+
+        this.applyFaceDownRule(card, true);
+
+        this.updateLayout();
+      };
+
+      Location.prototype.applyFaceDownRule = function(card, isStart) {
+        switch (this.faceDownRule) {
+          case Location.FaceDownRule.None:
+            break;
+          case Location.FaceDownRule.AlwaysDown:
+            card.isFaceDown = true;
+            break;
+          case Location.FaceDownRule.AlwaysUp:
+            card.isFaceDown = false;
+            break;
+          case Location.FaceDownRule.StartDown:
+            if (isStart)
+              card.isFaceDown = true;
+            break;
+          case Location.FaceDownRule.StartUp:
+            if (isStart)
+              card.isFaceDown = false;
+            break;
+        }
+      };
+
+      Location.prototype.removeCard = function(card) {
+        var index = this.cards.indexOf(card);
+        if (index !== -1) {
+          this.cards.splice(index, 1);
+          card.location = null;
+        }
+        return card;
+      };
+
+      Location.prototype.setLayout = function(layout) {
+        this.layout = layout;
+        this.updateLayout();
+      };
+
+      Location.prototype.updateLayout = function() {
+        if (this.pause > 0)
+          return;
+
+        for (var i = 0; i < this.cards.length; ++i) {
+          var card = this.cards[i];
+          if (this.layout === Location.Layout.Stack) {
+            card.x = this.x;
+            card.y = this.y;
+          }
+        }
+      };
+
+      Location.prototype.pauseLayout = function() {
+        this.pause++;
+      }
+
+      Location.prototype.unpauseLayout = function() {
+        this.pause--;
+        this.updateLayout();
+      }
+
+      Location.prototype.shuffle = function() {
+        var numCards = this.cards.length;
+        for (var i = numCards - 1; i >= 0; i--) {
+          var card = this.cards[i];
+          var otherIndex = ~~(Math.random()*numCards);
+          this.cards[i] = this.cards[otherIndex];
+          this.cards[otherIndex] = card;
+        };
+      };
+
+      Location.prototype.getCardXY = function(x, y) {
+        // reverse as top cards are drawn last
+        for (var i = this.cards.length - 1; i >= 0; i--) {
+          var card = this.cards[i];
+          if (card.isInsideXY(x, y))
+            return card;
+        }
+        return null;
+      };
+
+      Location.prototype.draw = function() {
+        ctx.strokeStyle = "green";
+        ctx.strokeRect(this.x - this.w*0.5, this.y - this.h*0.5, this.w, this.h);
+        ctx.fillStyle = "green";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.name, this.x, this.y);
+
+        for (var i = 0; i < this.cards.length; i++) {
+          this.cards[i].draw();
+        }
+      };
+
+      Location.prototype.isInsideXY = function(x, y) {
+        var halfHeight = this.h*0.5;
+        var halfWidth = this.w*0.5;
+        return (x >= this.x - halfWidth && x <= this.x + halfWidth && 
+          y >= this.y - halfHeight && y <= this.y + halfHeight);
+      }
+
+      //---------------------------
+      function Card(value, w, h) {
+        this.x = 0;
+        this.y = 0;
+        this.w = w;
+        this.h = h;
+        this.value = value;
+        this.frontCanvas = null;
+        this.backCanvas = null;
+        this.isFaceDown = false;
+
+        this.buildCanvases();
+      }
+
+      Card.back = null;
+      Card.prototype.buildCanvases = function() {
+        var width = this.w;
+        var height = this.h;
+
+        if (Card.back === null) {
+          Card.back = document.createElement("canvas");
+          Card.back.width = width;
+          Card.back.height = height;
+
+          var backctx = Card.back.getContext("2d");
+          backctx.fillStyle = "blue";
+          backctx.fillRect(0, 0, width, height);
+          backctx.strokeStyle = "white";
+          backctx.lineWidth = 5;
+          backctx.strokeRect(0, 0, width, height);
+        }
+
+        this.backCanvas = Card.back;
+        this.frontCanvas = document.createElement("canvas");
+        this.frontCanvas.width = width;
+        this.frontCanvas.height = height;
+        var frontctx = this.frontCanvas.getContext("2d");
+        frontctx.fillStyle = "green";
+        frontctx.fillRect(0, 0, width, height);
+        frontctx.fillStyle = "white";
+        frontctx.textAlign = "center";
+        frontctx.textBaseline = "middle";
+        frontctx.fillText(this.value.toString(), width*0.5, height*0.5);
+        frontctx.strokeStyle = "white";
+        frontctx.lineWidth = 5;
+        frontctx.strokeRect(0, 0, width, height);
+      };
+
+      Card.prototype.draw = function() {
+        var hh = this.h*0.5;
+        var hw = this.w*0.5;
+        if (this === zoomCard) {
+          hh = 1.5*hh;
+          hw = 1.5*hw;
+        }
+        ctx.drawImage((this.isFaceDown ? this.backCanvas : this.frontCanvas), 
+          this.x - hw, this.y - hh, 2*hw, 2*hh);
+      };
+
+      Card.prototype.isInsideXY = function(x, y) {
+        var halfHeight = this.h*0.5;
+        var halfWidth = this.w*0.5;
+        return (x >= this.x - halfWidth && x <= this.x + halfWidth && 
+          y >= this.y - halfHeight && y <= this.y + halfHeight);
+      }
+
+      Card.prototype.setFaceDown = function(isFaceDown) {
+        this.isFaceDown = isFaceDown;
+        if (this.location)
+          this.location.applyFaceDownRule(this);
+      };
+
+      //---------------------------
+      window.addEventListener("load", function() {
+        canvas = document.getElementById("canvas");
+        ctx = canvas.getContext("2d");
+
+        var game = new Game();
+        requestAnimationFrame(function() {game.update();});
+      });
+    })();
+    </script>
+  </head>
+  <body>
+    <canvas id="canvas" width="600" height="500"></canvas>
+    <div id="log"></div>
+  </body>
+</html>
