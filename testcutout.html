@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="interactionhelper.js" type="text/javascript"></script>
+    <style type="text/css">
+      body {
+        position: relative;
+      }
+
+      #ui {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+
+      #deck {
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+
+      .button .active {
+        display: inline-block;
+        background-color: red;
+        color: white;
+        padding: 0.5em;
+        cursor: pointer;
+        -webkit-userselect: false;
+      }
+
+      .button {
+        display: inline-block;
+        background-color: #f0a0a0;
+        padding: 0.5em;
+        cursor: pointer;
+        -webkit-userselect: false;
+      }
+
+    </style>
+    <script type="text/javascript">
+      (function(window) {
+        "use strict";
+
+        var canvas = null;
+        var ctx = null;
+        var ui = null;
+        var uictx = null;
+        var deck = null;
+        var deckctx = null;
+
+        var baseImage = null;
+        var imageReady = false;
+        var tool = "cutout";
+        var cards = [];
+
+        var sgn = function(x) {
+          if (x < 0) return -1;
+          else if (x > 0) return 1;
+          else return 0;
+        }
+
+        function Card(x, y) {
+          this.x = 0;
+          this.y = 0;
+          this.x1 = 0;
+          this.y1 = 0;
+          this.x2 = 0;
+          this.y2 = 0;
+        }
+
+        Card.prototype.setStart = function(x1, y1) {
+          this.x1 = x1;
+          this.y1 = y1;
+        };
+
+        Card.prototype.setEnd = function(x2, y2) {
+          this.x2 = x2;
+          this.y2 = y2;
+        };
+
+        Card.prototype.getTop = function() {
+          return Math.min(this.y1, this.y2);
+        };
+
+        Card.prototype.getLeft = function() {
+          return Math.min(this.x1, this.x2);
+        };
+
+        Card.prototype.getBottom = function() {
+          return Math.max(this.y1, this.y2);
+        };
+
+        Card.prototype.getRight = function() {
+          return Math.max(this.x1, this.x2);
+        };
+
+        Card.prototype.getWidth = function() {
+          return Math.abs(this.x1 - this.x2);
+        };
+
+        Card.prototype.getHeight = function() {
+          return Math.abs(this.y1 - this.y2);
+        };
+
+        Card.prototype.getX = function() {
+          return (this.x1 + this.x2)*0.5;
+        };
+
+        Card.prototype.getY = function() {
+          return (this.y1 + this.y2)*0.5;
+        };
+
+        Card.prototype.draw = function(ctx, x, y) {
+          if (typeof x === "undefined") 
+            x = this.x;
+
+          if (typeof y === "undefined") 
+            y = this.y;
+
+          var w = this.getWidth();
+          var h = this.getHeight();
+          ctx.drawImage(baseImage, this.getLeft(), this.getTop(), w, h, x, y, w, h)
+        };
+
+        Card.prototype.isInsideXY = function(x, y) {
+          return x >= this.getLeft() && x <= this.getRight() && y >= this.getTop() && y <= this.getBottom();
+        };
+
+        Card.prototype.drawOutline = function(ctx) {
+          ctx.strokeRect(this.getLeft(), this.getTop(), this.getWidth(), this.getHeight());
+        };
+
+        var getCardXY = function(x, y) {
+          // loop backwards as the last card is drawn on top
+          for (var i = cards.length - 1; i >= 0; i--) {
+            var card = cards[i];
+            if (card.isInsideXY(x, y))
+              return card;
+          }
+          return null;
+        };
+
+        var onPointer = {};
+        var newCard = null;
+        var pickedCard = null;
+        var pickedThumb = "";
+        var EDGE_RESIZE_BORDER = 20;
+
+        onPointer.cutout = function(e) {
+          switch (e.state) {
+            case InteractionHelper.State.Move:
+              if (newCard === null) {
+                newCard = new Card();
+                newCard.setStart(e.x, e.y);
+              }
+              newCard.setEnd(e.x, e.y);
+              break;
+
+            case InteractionHelper.State.End:
+              cards.push(newCard);
+              newCard = null;
+          }
+        };
+
+        function getThumb(card, x, y) {
+          if (card === null)
+            return "";
+
+          var thumb = "";
+          var sgnY = sgn(card.y2 - card.y1);
+          if (y > card.y2 - sgnY*EDGE_RESIZE_BORDER) {
+            thumb += "y2";
+          } else if (y < card.y1 + sgnY*EDGE_RESIZE_BORDER) {
+            thumb += "y1";
+          }
+
+          var sgnX = sgn(card.x2 - card.x1);
+          if (x > card.x2 - sgnX*EDGE_RESIZE_BORDER) {
+            thumb += "x2";
+          } else if (x < card.x1 + sngX*EDGE_RESIZE_BORDER) {
+            thumb += "x1";
+          } else if (thumb === "") {
+            thumb = "xy";
+          }
+          return thumb;
+        }
+
+        onPointer.resize = function(e) {
+          switch (e.state) {
+            case InteractionHelper.State.Start:
+              pickedCard = getCardXY(e.x, e.y);
+              pickedThumb = getThumb(pickedCard, e.x, e.y);
+              break;
+
+            case InteractionHelper.State.Move:
+              if (pickedCard) {
+                switch (pickedThumb) {
+                  case "xy":
+                    pickedCard.x1 += e.deltaX;
+                    pickedCard.x2 += e.deltaX;
+                    pickedCard.y1 += e.deltaY;
+                    pickedCard.y2 += e.deltaY;
+                    break;
+                  case "x1":
+                    pickedCard.x1 += e.deltaX;
+                    break;
+                  case "x2":
+                    pickedCard.x2 += e.deltaX;
+                    break;
+                  case "y2":
+                    pickedCard.y1 += e.deltaY;
+                    break;
+                  case "y2":
+                    pickedCard.y2 += e.deltaT;
+                    break;
+                  case "x1y1":
+                    pickedCard.x1 += e.deltaX;
+                    pickedCard.y1 += e.deltaY;
+                    break;
+                  case "x2y2":
+                    pickedCard.x2 += e.deltaX;
+                    pickedCard.y1 += e.deltaY;
+                    break;
+                  case "x1y2":
+                    pickedCard.x1 += e.deltaX;
+                    pickedCard.y2 += e.deltaY;
+                    break;
+                  case "x2y2":
+                    pickedCard.x2 += e.deltaX;
+                    pickedCard.y2 += e.deltaY;
+                    break;
+                }
+              }
+              break;
+
+            case InteractionHelper.State.End:
+              pickedCard = null;
+              pickedThumb = "";
+              break;
+          }
+        };
+
+        var drawCards = function() {
+          // var maxY = 0;
+          // var x = 0;
+          // var y = 0;
+          // for (var i = 0; i < cards.length; ++i) {
+          //   var card = cards[i];
+          //   if (x + card.getWidth() > deck.width) {
+          //     x = 0;
+          //     y += maxY;
+          //     maxY = 0;
+          //   }
+          //   card.draw(deckctx, x, y);
+
+          //   x += card.getWidth();
+          //   if (card.getHeight() > maxY)
+          //     maxY = card.getHeight();
+          // }
+          for (var i = cards.length - 1; i >= 0; i--) {
+            var card = cards[i];
+            deckctx.strokeStyle = (card === pickedCard ? "green" : "blue");
+            card.drawOutline(deckctx);
+          };
+        };
+
+        var drawUI = function() {
+          uictx.clearRect(0, 0, ui.width, ui.height);
+          if (newCard) {
+            uictx.strokeStyle = "blue";
+            uictx.setLineDash([5, 5, 2, 5]);
+            uictx.strokeRect(newCard.getLeft(), newCard.getTop(), newCard.getWidth(), newCard.getHeight());
+          }
+        };
+
+        var draw = function() {
+          drawUI();
+          drawCards();
+        };
+
+        var update = function() {
+          draw();
+          requestAnimationFrame(update);
+        };
+
+        var setTool = function(newTool) {
+          if (tool)
+            document.getElementById(tool).classList.remove("active");
+
+          tool = newTool;
+          document.getElementById(tool).classList.add("active");
+        }
+
+        var loadingComplete = function() {
+          ctx.drawImage(baseImage, 0, 0);
+          requestAnimationFrame(update);
+        };
+
+        window.addEventListener("load", function() {
+          canvas = document.getElementById("canvas");
+          ctx = canvas.getContext("2d");
+
+          ui = document.getElementById("ui");
+          uictx = ui.getContext("2d");
+
+          deck = document.getElementById("deck");
+          deckctx = deck.getContext("2d");
+
+          new InteractionHelper(ui, function(e) {
+            onPointer[tool](e);
+          });
+
+          imageReady = false;
+          baseImage = new Image();
+          baseImage.onload = loadingComplete;
+          baseImage.src = "World-1985.png";
+
+          document.getElementById("cutout").addEventListener("click", function() {setTool("cutout");});
+          document.getElementById("resize").addEventListener("click", function() {setTool("resize");});
+        });
+      })(window);
+    </script>
+  </head>
+  <body>
+    <canvas id="canvas" width="600" height="500"></canvas>
+    <canvas id="deck" width="600" height="500"></canvas>
+    <canvas id="ui" width="600" height="500"></canvas>
+    <div></div>
+    <div id="cutout" class="button">CutOut</div>
+    <div id="resize" class="button">Resize</div>
+  </body>
+</html>

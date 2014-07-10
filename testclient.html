@@ -1,36 +1,42 @@
 <!DOCTYPE>
 <html>
-  <head>
+
+<head>
     <script type="text/javascript">
-      function receive() {
+    function receive() {
         var xhr = new XMLHttpRequest();
         xhr.open('GET', '/test.dat', true);
         xhr.responseType = 'text';
         xhr.onload = function(e) {
-          if (this.status === 200) {
-            document.getElementById("receive").innerHTML = this.response;
-          }
+            if (this.status === 200) {
+                document.getElementById("receive").innerHTML = this.response;
+            }
         }
         xhr.send();
-      }
+    }
 
-      function send() {
+    function send() {
         var xhr = new XMLHttpRequest();
         xhr.open('POST', '/test.dat', true);
         xhr.responseType = 'text';
         xhr.onload = function(e) {
-          if (this.status === 200) {
-            console.log(this.responseText);
-          }
+            if (this.status === 200) {
+                console.log(this.responseText);
+            }
         }
         xhr.setRequestHeader('Content-Type', 'application/json');
-        xhr.send(JSON.stringify({Name: 'John', Age: 30}));
-      }
+        xhr.send(JSON.stringify({
+            Name: 'John',
+            Age: 30
+        }));
+    }
     </script>
-  </head>
-  <body>
+</head>
+
+<body>
     <button onclick="receive()">Receive</button>
     <button onclick="send()">Send</button>
     <div id="receive"></div>
-  </body>
+</body>
+
 </html>
